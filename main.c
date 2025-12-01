@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,6 +31,21 @@ static void copy_line_without_prefix(char *destination, size_t destination_size,
 
   strncpy(destination, start, destination_size - 1);
   destination[destination_size - 1] = '\0';
+}
+
+static void print_usage(const char *program_name) {
+  printf("Cuizz: Quizzes in the terminal\n\n");
+  printf("Usage: %s <questions-file>\n", program_name);
+  printf("       %s -h | --help\n\n", program_name);
+  printf("File format (question block):\n");
+  printf("  What is the capital of France?\n");
+  printf("  - Paris\n");
+  printf("  - Berlin\n");
+  printf("  - Madrid\n");
+  printf("  - Rome\n");
+  printf("  1\n\n");
+  printf("Controls during the quiz:\n");
+  printf("  1-4 = choose answer, q = quit, s = skip, r = restart quiz\n\n");
 }
 
 static int read_nonempty_line(FILE *file, char *buffer, size_t buffer_size) {
@@ -183,25 +199,50 @@ void print_question_card(struct question_card question_card,
   printf("4. %s\n", question_card.alternative4);
 }
 
-static int get_int_in_range(int minimum, int maximum) {
+enum user_action { ACTION_ANSWER, ACTION_SKIP, ACTION_QUIT, ACTION_RESTART };
+
+struct user_choice {
+  enum user_action action;
+  int answer;
+};
+
+static struct user_choice get_user_choice(void) {
   for (;;) {
     char buffer[32];
     char *endptr = NULL;
     long value;
 
-    printf("Your answer (%d-%d): ", minimum, maximum);
+    printf("Your answer (1-4, q=quit, s=skip, r=restart): ");
 
     if (fgets(buffer, sizeof(buffer), stdin) == NULL) {
       printf("Input error. Please try again.\n");
       continue;
     }
 
+    // Trim leading whitespace.
+    while (*buffer == ' ' || *buffer == '\t') {
+      memmove(buffer, buffer + 1, strlen(buffer));
+    }
+
+    // Handle command shortcuts.
+    if (buffer[0] != '\0') {
+      char lower = (char)tolower((unsigned char)buffer[0]);
+      if (lower == 'q') {
+        return (struct user_choice){.action = ACTION_QUIT, .answer = 0};
+      }
+      if (lower == 's') {
+        return (struct user_choice){.action = ACTION_SKIP, .answer = 0};
+      }
+      if (lower == 'r') {
+        return (struct user_choice){.action = ACTION_RESTART, .answer = 0};
+      }
+    }
+
     errno = 0;
     value = strtol(buffer, &endptr, 10);
 
     if (errno != 0 || endptr == buffer) {
-      printf("Invalid input. Please enter a number between %d and %d.\n",
-             minimum, maximum);
+      printf("Invalid input. Enter 1-4, or q/s/r.\n");
       continue;
     }
 
@@ -210,23 +251,18 @@ static int get_int_in_range(int minimum, int maximum) {
     }
 
     if (*endptr != '\n' && *endptr != '\0') {
-      printf("Unexpected characters after the number. "
-             "Please enter a number between %d and %d.\n",
-             minimum, maximum);
+      printf("Unexpected characters after the number. Enter 1-4, or q/s/r.\n");
       continue;
     }
 
-    if (value < minimum || value > maximum) {
-      printf("Number out of range. Please enter a number between %d and %d.\n",
-             minimum, maximum);
+    if (value < 1 || value > 4) {
+      printf("Number out of range. Enter 1-4, or q/s/r.\n");
       continue;
     }
 
-    return (int)value;
+    return (struct user_choice){.action = ACTION_ANSWER, .answer = (int)value};
   }
 }
-
-int get_user_answer() { return get_int_in_range(1, 4); }
 
 int is_correct_answer(int user_answer, struct question_card question_card) {
   if (question_card.correct_alternative == user_answer) {
@@ -246,8 +282,13 @@ void print_result(int result, struct question_card question_card) {
 
 int main(int argc, char *argv[]) {
   if (argc != 2) {
-    printf("Usage: %s [questions file]\n", argv[0]);
-    return EXIT_FAILURE;
+    print_usage(argv[0]);
+    return (argc == 1) ? EXIT_SUCCESS : EXIT_FAILURE;
+  }
+
+  if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0) {
+    print_usage(argv[0]);
+    return EXIT_SUCCESS;
   }
 
   struct question_card *questions = read_questions_file(argv[1]);
@@ -265,17 +306,35 @@ int main(int argc, char *argv[]) {
 
   size_t correct_answers = 0;
 
-  for (size_t index = 0; index < number_of_questions; index++) {
+  for (size_t index = 0; index < number_of_questions;) {
     struct question_card question = questions[index];
 
     print_question_card(question, index);
-    int user_answer = get_user_answer();
-    int result = is_correct_answer(user_answer, question);
+    struct user_choice choice = get_user_choice();
+
+    if (choice.action == ACTION_QUIT) {
+      printf("Quitting early. Progress saved up to this point.\n");
+      break;
+    }
+    if (choice.action == ACTION_SKIP) {
+      printf("Skipped.\n\n");
+      index++;
+      continue;
+    }
+    if (choice.action == ACTION_RESTART) {
+      printf("Restarting quiz...\n");
+      correct_answers = 0;
+      index = 0;
+      continue;
+    }
+
+    int result = is_correct_answer(choice.answer, question);
     print_result(result, question);
     if (result) {
       correct_answers++;
     }
     printf("\n");
+    index++;
   }
 
   free(questions);

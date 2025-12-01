@@ -219,12 +219,10 @@ static struct user_choice get_user_choice(void) {
       continue;
     }
 
-    // Trim leading whitespace.
     while (*buffer == ' ' || *buffer == '\t') {
       memmove(buffer, buffer + 1, strlen(buffer));
     }
 
-    // Handle command shortcuts.
     if (buffer[0] != '\0') {
       char lower = (char)tolower((unsigned char)buffer[0]);
       if (lower == 'q') {
